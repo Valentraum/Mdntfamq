@@ -22,10 +22,13 @@ from dataclasses import dataclass
 
 import discord
 import yt_dlp
+import imageio_ffmpeg
 from discord import app_commands
 from discord.ext import commands
 
 log = logging.getLogger("family-bot.music")
+
+FFMPEG_EXECUTABLE = imageio_ffmpeg.get_ffmpeg_exe()  # путь к встроенному бинарнику ffmpeg (из пакета imageio-ffmpeg)
 
 YDL_OPTS = {
     "format": "bestaudio/best",
@@ -99,7 +102,7 @@ class Music(commands.Cog):
             return
         track = state.queue.popleft()
         state.current = track
-        source = discord.FFmpegPCMAudio(track.stream_url, **FFMPEG_OPTS)
+        source = discord.FFmpegPCMAudio(track.stream_url, executable=FFMPEG_EXECUTABLE, **FFMPEG_OPTS)
 
         def after_playing(error):
             if error:
