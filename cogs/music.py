@@ -9,15 +9,25 @@ Cog: Music
   /stop                    -> остановить и очистить очередь, бот выходит из канала
   /queue                   -> показать очередь
 
+Как это работает:
+  yt-dlp запускается отдельным процессом и передаёт аудио-байты напрямую в
+  ffmpeg через pipe (без записи на диск и без сети внутри самого ffmpeg —
+  всей сетью занимается yt-dlp). Играть начинает почти сразу, как при обычном
+  стриминге, но при этом ffmpeg никогда не открывает HTTPS-соединения сам —
+  это было нужно, т.к. на некоторых урезанных хостингах ffmpeg падал с
+  segfault именно при попытке читать сетевой поток напрямую.
+
 Требования на сервере, где крутится бот:
-  - установлен ffmpeg (apt install ffmpeg на Ubuntu)
-  - установлен yt-dlp (pip install yt-dlp)
-  - PyNaCl (pip install pynacl) для работы голоса
+  - ffmpeg (идёт через пакет imageio-ffmpeg, ставится через pip)
+  - yt-dlp (pip install yt-dlp)
+  - libopus (идёт через пакет opuslib-next-bundled, ставится через pip)
 """
 
 import os
+import sys
 import asyncio
 import logging
+import subprocess
 from collections import deque
 from dataclasses import dataclass
 
@@ -44,7 +54,7 @@ if not discord.opus.is_loaded():
     except Exception:
         log.exception("Не удалось загрузить libopus из opuslib-next-bundled")
 
-YDL_OPTS = {
+INFO_YDL_OPTS = {
     "format": "bestaudio/best",
     "noplaylist": True,
     "quiet": True,
@@ -62,23 +72,23 @@ FFMPEG_OPTS = {
 class Track:
     title: str
     url: str
-    stream_url: str
+    search_query: str  # то, что передадим в yt-dlp CLI при непосредственном запуске
     requested_by: str
-    http_headers: dict
 
 
-def extract_track(query: str) -> Track:
-    """Синхронная функция — вызывается через run_in_executor, чтобы не блокировать бота."""
-    with yt_dlp.YoutubeDL(YDL_OPTS) as ydl:
+def fetch_track_info(query: str) -> Track:
+    """Синхронная функция (run_in_executor) — только достаёт метаданные (название,
+    ссылку), САМО аудио тут не скачивается — это отдельный быстрый запрос."""
+    with yt_dlp.YoutubeDL(INFO_YDL_OPTS) as ydl:
         info = ydl.extract_info(query, download=False)
         if "entries" in info:  # результат поиска -> берём первый
             info = info["entries"][0]
+        webpage_url = info.get("webpage_url", query)
         return Track(
             title=info.get("title", "Неизвестный трек"),
-            url=info.get("webpage_url", query),
-            stream_url=info["url"],
+            url=webpage_url,
+            search_query=webpage_url,  # запускаем yt-dlp CLI уже по прямой ссылке на видео
             requested_by="",
-            http_headers=info.get("http_headers", {}),
         )
 
 
@@ -87,6 +97,7 @@ class GuildMusicState:
         self.queue: deque[Track] = deque()
         self.voice_client: discord.VoiceClient | None = None
         self.current: Track | None = None
+        self.current_process: subprocess.Popen | None = None
 
 
 class Music(commands.Cog):
@@ -115,20 +126,34 @@ class Music(commands.Cog):
         state = self.get_state(guild_id)
         if not state.queue:
             state.current = None
+            state.current_process = None
             return
         track = state.queue.popleft()
         state.current = track
 
-        ffmpeg_opts = dict(FFMPEG_OPTS)
-        if track.http_headers:
-            headers_str = "".join(f"{k}: {v}\r\n" for k, v in track.http_headers.items())
-            ffmpeg_opts["before_options"] = f'-headers "{headers_str}" ' + ffmpeg_opts["before_options"]
+        # yt-dlp сам качает и пишет аудио-байты в stdout, ffmpeg читает их из этого
+        # pipe — сети внутри ffmpeg нет вообще, ею занимается только yt-dlp.
+        ytdlp_cmd = [
+            sys.executable, "-m", "yt_dlp",
+            "-f", "bestaudio/best",
+            "--no-playlist",
+            "-o", "-",
+            "--quiet",
+            "--no-warnings",
+            track.search_query,
+        ]
+        proc = subprocess.Popen(ytdlp_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        state.current_process = proc
 
-        source = discord.FFmpegPCMAudio(track.stream_url, executable=FFMPEG_EXECUTABLE, **ffmpeg_opts)
+        source = discord.FFmpegPCMAudio(proc.stdout, pipe=True, executable=FFMPEG_EXECUTABLE, **FFMPEG_OPTS)
 
         def after_playing(error):
             if error:
                 log.error(f"Ошибка воспроизведения: {error}")
+            try:
+                proc.terminate()
+            except Exception:
+                pass
             self.play_next(guild_id)
 
         state.voice_client.play(source, after=after_playing)
@@ -143,10 +168,10 @@ class Music(commands.Cog):
 
         loop = asyncio.get_event_loop()
         try:
-            track = await loop.run_in_executor(None, extract_track, запрос)
+            track = await loop.run_in_executor(None, fetch_track_info, запрос)
         except Exception:
             log.exception("Ошибка поиска трека")
-            await interaction.followup.send("❌ Не удалось найти/загрузить трек. Проверь запрос или ссылку.")
+            await interaction.followup.send("❌ Не удалось найти трек. Проверь запрос или ссылку.")
             return
 
         track.requested_by = str(interaction.user)
@@ -190,10 +215,16 @@ class Music(commands.Cog):
     async def stop(self, interaction: discord.Interaction):
         state = self.get_state(interaction.guild_id)
         state.queue.clear()
+        if state.current_process:
+            try:
+                state.current_process.terminate()
+            except Exception:
+                pass
         if state.voice_client:
             await state.voice_client.disconnect()
             state.voice_client = None
         state.current = None
+        state.current_process = None
         await interaction.response.send_message("⏹️ Остановлено, очередь очищена.")
 
     @app_commands.command(name="queue", description="Показать текущую очередь треков")
