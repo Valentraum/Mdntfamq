@@ -23,7 +23,7 @@ load_dotenv()  # подхватывает переменные из файла .
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("family-bot")
 
-TOKEN = os.environ.get("DISCORD_TOKEN", "")
+TOKEN = os.environ.get("DISCORD_TOKEN") or os.environ.get("DISCORD_BOT_TOKEN") or ""
 GUILD_ID = os.environ.get("GUILD_ID")  # опционально, для мгновенной регистрации слэш-команд
 
 intents = discord.Intents.default()
