@@ -15,6 +15,7 @@ Cog: Music
   - PyNaCl (pip install pynacl) для работы голоса
 """
 
+import os
 import asyncio
 import logging
 from collections import deque
@@ -29,6 +30,19 @@ from discord.ext import commands
 log = logging.getLogger("family-bot.music")
 
 FFMPEG_EXECUTABLE = imageio_ffmpeg.get_ffmpeg_exe()  # путь к встроенному бинарнику ffmpeg (из пакета imageio-ffmpeg)
+
+# discord.py нужна библиотека libopus для кодирования голоса. На некоторых хостингах
+# (контейнерах без системного apt-доступа) её нет — подгружаем встроенную версию
+# из пакета opuslib-next-bundled, если discord.py не нашла системную сама.
+if not discord.opus.is_loaded():
+    try:
+        import opuslib_next
+        _opus_path = os.path.join(os.path.dirname(opuslib_next.__file__), "_native", "libopus.so")
+        if os.path.exists(_opus_path):
+            discord.opus.load_opus(_opus_path)
+            log.info(f"libopus загружена из opuslib-next-bundled: {_opus_path}")
+    except Exception:
+        log.exception("Не удалось загрузить libopus из opuslib-next-bundled")
 
 YDL_OPTS = {
     "format": "bestaudio/best",
