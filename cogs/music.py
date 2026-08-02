@@ -60,6 +60,7 @@ INFO_YDL_OPTS = {
     "quiet": True,
     "default_search": "ytsearch",
     "source_address": "0.0.0.0",
+    "extractor_args": {"youtube": {"player_client": ["android"]}},
 }
 
 FFMPEG_OPTS = {
@@ -140,6 +141,7 @@ class Music(commands.Cog):
             "-o", "-",
             "--quiet",
             "--no-warnings",
+            "--extractor-args", "youtube:player_client=android",
             track.search_query,
         ]
         proc = subprocess.Popen(ytdlp_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
