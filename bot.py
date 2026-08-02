@@ -47,10 +47,27 @@ async def on_ready():
         if GUILD_ID:
             guild_obj = discord.Object(id=int(GUILD_ID))
             bot.tree.copy_global_to(guild=guild_obj)
-            synced = await bot.tree.sync(guild=guild_obj)
         else:
-            synced = await bot.tree.sync()
-        log.info(f"Синхронизировано команд: {len(synced)}")
+            guild_obj = None
+
+        synced = None
+        last_error = None
+        for attempt in range(1, 4):  # до 3 попыток с паузой — Discord иногда временно отвечает 403 сразу после коннекта
+            try:
+                if guild_obj:
+                    synced = await bot.tree.sync(guild=guild_obj)
+                else:
+                    synced = await bot.tree.sync()
+                break
+            except discord.Forbidden as e:
+                last_error = e
+                log.warning(f"Попытка {attempt}/3 синхронизации не удалась (403), жду 5 сек…")
+                await asyncio.sleep(5)
+
+        if synced is not None:
+            log.info(f"Синхронизировано команд: {len(synced)}")
+        else:
+            log.error(f"Не удалось синхронизировать команды после 3 попыток: {last_error}")
     except Exception:
         log.exception("Ошибка синхронизации слэш-команд")
     log.info(f"Бот запущен как {bot.user} (ID: {bot.user.id})")
