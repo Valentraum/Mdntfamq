@@ -64,6 +64,7 @@ class Track:
     url: str
     stream_url: str
     requested_by: str
+    http_headers: dict
 
 
 def extract_track(query: str) -> Track:
@@ -77,6 +78,7 @@ def extract_track(query: str) -> Track:
             url=info.get("webpage_url", query),
             stream_url=info["url"],
             requested_by="",
+            http_headers=info.get("http_headers", {}),
         )
 
 
@@ -116,7 +118,13 @@ class Music(commands.Cog):
             return
         track = state.queue.popleft()
         state.current = track
-        source = discord.FFmpegPCMAudio(track.stream_url, executable=FFMPEG_EXECUTABLE, **FFMPEG_OPTS)
+
+        ffmpeg_opts = dict(FFMPEG_OPTS)
+        if track.http_headers:
+            headers_str = "".join(f"{k}: {v}\r\n" for k, v in track.http_headers.items())
+            ffmpeg_opts["before_options"] = f'-headers "{headers_str}" ' + ffmpeg_opts["before_options"]
+
+        source = discord.FFmpegPCMAudio(track.stream_url, executable=FFMPEG_EXECUTABLE, **ffmpeg_opts)
 
         def after_playing(error):
             if error:
