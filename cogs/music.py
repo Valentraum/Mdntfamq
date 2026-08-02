@@ -27,6 +27,7 @@ import os
 import sys
 import asyncio
 import logging
+import threading
 import subprocess
 from collections import deque
 from dataclasses import dataclass
@@ -144,14 +145,25 @@ class Music(commands.Cog):
             "--extractor-args", "youtube:player_client=android",
             track.search_query,
         ]
-        proc = subprocess.Popen(ytdlp_cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        proc = subprocess.Popen(ytdlp_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         state.current_process = proc
+
+        def log_stderr(process: subprocess.Popen, track_title: str):
+            for line in iter(process.stderr.readline, b""):
+                text = line.decode(errors="replace").strip()
+                if text:
+                    log.warning(f"[yt-dlp stderr | {track_title}] {text}")
+
+        threading.Thread(target=log_stderr, args=(proc, track.title), daemon=True).start()
 
         source = discord.FFmpegPCMAudio(proc.stdout, pipe=True, executable=FFMPEG_EXECUTABLE, **FFMPEG_OPTS)
 
         def after_playing(error):
             if error:
                 log.error(f"Ошибка воспроизведения: {error}")
+            exit_code = proc.poll()
+            if exit_code is not None and exit_code != 0:
+                log.warning(f"yt-dlp завершился с кодом {exit_code} для трека «{track.title}» — возможно, поток оборвался раньше времени.")
             try:
                 proc.terminate()
             except Exception:
@@ -159,6 +171,26 @@ class Music(commands.Cog):
             self.play_next(guild_id)
 
         state.voice_client.play(source, after=after_playing)
+
+    @commands.Cog.listener()
+    async def on_voice_state_update(self, member: discord.Member, before: discord.VoiceState, after: discord.VoiceState):
+        # Реагируем только на изменения состояния САМОГО бота
+        if member.id != self.bot.user.id:
+            return
+        # Бота отключили из канала вручную (или разрыв соединения) -> канал стал None
+        if before.channel is not None and after.channel is None:
+            state = self.states.get(member.guild.id)
+            if state:
+                log.info(f"Бота отключили из голосового канала на сервере {member.guild.id} — чищу очередь и процессы.")
+                if state.current_process:
+                    try:
+                        state.current_process.terminate()
+                    except Exception:
+                        pass
+                state.queue.clear()
+                state.current = None
+                state.current_process = None
+                state.voice_client = None
 
     @app_commands.command(name="play", description="Найти и воспроизвести музыку (название, исполнитель или ссылка YouTube)")
     @app_commands.describe(запрос="Название песни / исполнитель, либо ссылка на YouTube")
