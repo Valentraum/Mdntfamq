@@ -9,6 +9,8 @@ Cog: Music
   /stop                    -> остановить и очистить очередь, бот выходит из канала
   /queue                   -> показать очередь
 
+Все ответы на команды — ephemeral (видит только тот, кто написал команду).
+
 Как это работает:
   yt-dlp запускается отдельным процессом и передаёт аудио-байты напрямую в
   ffmpeg через pipe (без записи на диск и без сети внутри самого ffmpeg —
@@ -195,7 +197,7 @@ class Music(commands.Cog):
     @app_commands.command(name="play", description="Найти и воспроизвести музыку (название, исполнитель или ссылка YouTube)")
     @app_commands.describe(запрос="Название песни / исполнитель, либо ссылка на YouTube")
     async def play(self, interaction: discord.Interaction, запрос: str):
-        await interaction.response.defer()
+        await interaction.response.defer(ephemeral=True)  # ответ видит только тот, кто написал
         vc = await self.ensure_voice(interaction)
         if vc is None:
             return
@@ -205,7 +207,7 @@ class Music(commands.Cog):
             track = await loop.run_in_executor(None, fetch_track_info, запрос)
         except Exception:
             log.exception("Ошибка поиска трека")
-            await interaction.followup.send("❌ Не удалось найти трек. Проверь запрос или ссылку.")
+            await interaction.followup.send("❌ Не удалось найти трек. Проверь запрос или ссылку.", ephemeral=True)
             return
 
         track.requested_by = str(interaction.user)
@@ -214,16 +216,19 @@ class Music(commands.Cog):
 
         if not vc.is_playing() and not vc.is_paused():
             self.play_next(interaction.guild_id)
-            await interaction.followup.send(f"▶️ Сейчас играет: **{track.title}**")
+            await interaction.followup.send(f"▶️ Сейчас играет: **{track.title}**", ephemeral=True)
         else:
-            await interaction.followup.send(f"➕ Добавлено в очередь: **{track.title}** (позиция {len(state.queue)})")
+            await interaction.followup.send(
+                f"➕ Добавлено в очередь: **{track.title}** (позиция {len(state.queue)})",
+                ephemeral=True,
+            )
 
     @app_commands.command(name="skip", description="Пропустить текущий трек")
     async def skip(self, interaction: discord.Interaction):
         state = self.get_state(interaction.guild_id)
         if state.voice_client and (state.voice_client.is_playing() or state.voice_client.is_paused()):
             state.voice_client.stop()  # вызовет after_playing -> play_next
-            await interaction.response.send_message("⏭️ Трек пропущен.")
+            await interaction.response.send_message("⏭️ Трек пропущен.", ephemeral=True)
         else:
             await interaction.response.send_message("Сейчас ничего не играет.", ephemeral=True)
 
@@ -232,7 +237,7 @@ class Music(commands.Cog):
         state = self.get_state(interaction.guild_id)
         if state.voice_client and state.voice_client.is_playing():
             state.voice_client.pause()
-            await interaction.response.send_message("⏸️ Пауза.")
+            await interaction.response.send_message("⏸️ Пауза.", ephemeral=True)
         else:
             await interaction.response.send_message("Сейчас ничего не играет.", ephemeral=True)
 
@@ -241,7 +246,7 @@ class Music(commands.Cog):
         state = self.get_state(interaction.guild_id)
         if state.voice_client and state.voice_client.is_paused():
             state.voice_client.resume()
-            await interaction.response.send_message("▶️ Продолжаем.")
+            await interaction.response.send_message("▶️ Продолжаем.", ephemeral=True)
         else:
             await interaction.response.send_message("Воспроизведение не на паузе.", ephemeral=True)
 
@@ -259,7 +264,7 @@ class Music(commands.Cog):
             state.voice_client = None
         state.current = None
         state.current_process = None
-        await interaction.response.send_message("⏹️ Остановлено, очередь очищена.")
+        await interaction.response.send_message("⏹️ Остановлено, очередь очищена.", ephemeral=True)
 
     @app_commands.command(name="queue", description="Показать текущую очередь треков")
     async def queue_cmd(self, interaction: discord.Interaction):
@@ -272,7 +277,7 @@ class Music(commands.Cog):
                 lines.append(f"{i}. {t.title} (заказал: {t.requested_by})")
         if not lines:
             lines = ["Очередь пуста."]
-        await interaction.response.send_message("\n".join(lines))
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
