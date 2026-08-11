@@ -35,6 +35,7 @@ INITIAL_EXTENSIONS = [
     "cogs.news",
     "cogs.music",
     "cogs.giveaway",
+    "cogs.audit",
 ]
 # Примечание: заявки с Google Form отправляются напрямую через Discord Webhook
 # из Google Apps Script (см. google_apps_script.gs и README.md) — боту для этого
