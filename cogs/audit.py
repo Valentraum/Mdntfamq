@@ -55,7 +55,11 @@ AUDIT_LOG_CHANNEL_ID = int(os.environ.get("AUDIT_LOG_CHANNEL_ID", DEFAULT_AUDIT_
 # Если задан — под каждым таким отчётом бот сам прикрепляет панель аудита
 # (кнопки видят все, но нажать их по-прежнему могут только Кадровик и выше,
 # см. has_hr_permission / HR_PANEL_ACCESS_ROLES ниже).
-PROMOTION_REPORT_CHANNEL_ID = os.environ.get("PROMOTION_REPORT_CHANNEL_ID")
+# Захардкожен как дефолт (по той же схеме, что и AUDIT_LOG_CHANNEL_ID выше) —
+# на хостинге не получилось применить новую переменную окружения через панель
+# (422 при сохранении), поэтому значение не зависит от .env/панели и работает сразу.
+DEFAULT_PROMOTION_REPORT_CHANNEL_ID = 1532062905971904764
+PROMOTION_REPORT_CHANNEL_ID = os.environ.get("PROMOTION_REPORT_CHANNEL_ID", str(DEFAULT_PROMOTION_REPORT_CHANNEL_ID))
 
 # Линейная лестница рангов, от самого младшего к самому старшему.
 # ВАЖНО: порядок имеет значение — "Повысить"/"Понизить" двигаются по этому списку.
