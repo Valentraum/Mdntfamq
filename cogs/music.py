@@ -226,7 +226,14 @@ class Music(commands.Cog):
 
         if not vc.is_playing() and not vc.is_paused():
             self.play_next(interaction.guild_id)
-            await interaction.followup.send(f"▶️ Сейчас играет: **{track.title}**", ephemeral=True)
+            # Панель управления теперь прикреплена прямо к "Сейчас играет" (видит только
+            # тот, кто запустил трек — как и раньше, ephemeral), а не вызывается отдельной
+            # командой/сообщением.
+            await interaction.followup.send(
+                f"▶️ Сейчас играет: **{track.title}**",
+                view=MusicPanelView(self),
+                ephemeral=True,
+            )
         else:
             await interaction.followup.send(
                 f"➕ Добавлено в очередь: **{track.title}** (позиция {len(state.queue)})",

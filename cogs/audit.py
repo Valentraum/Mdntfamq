@@ -51,6 +51,12 @@ log = logging.getLogger("family-bot.audit")
 DEFAULT_AUDIT_LOG_CHANNEL_ID = 1536569352873054229
 AUDIT_LOG_CHANNEL_ID = int(os.environ.get("AUDIT_LOG_CHANNEL_ID", DEFAULT_AUDIT_LOG_CHANNEL_ID))
 
+# Канал, куда Google Apps Script вебхуком постит "Новый отчёт на повышение".
+# Если задан — под каждым таким отчётом бот сам прикрепляет панель аудита
+# (кнопки видят все, но нажать их по-прежнему могут только Кадровик и выше,
+# см. has_hr_permission / HR_PANEL_ACCESS_ROLES ниже).
+PROMOTION_REPORT_CHANNEL_ID = os.environ.get("PROMOTION_REPORT_CHANNEL_ID")
+
 # Линейная лестница рангов, от самого младшего к самому старшему.
 # ВАЖНО: порядок имеет значение — "Повысить"/"Понизить" двигаются по этому списку.
 RANK_ROLES = [
@@ -276,7 +282,10 @@ class AssignPositionModal(discord.ui.Modal, title="Назначить на до�
         self.cog = cog
         self.discord_id = discord.ui.TextInput(label="Discord ID участника", placeholder="например: 123456789012345678", required=True)
         names = " / ".join(name for name, _ in POSITIONS)
-        self.position = discord.ui.TextInput(label=f"Должность ({names})", required=True)
+        # Discord ограничивает TextInput.label 45 символами и тихо (без ошибки) не показывает
+        # модалку, если превысить лимит — раньше список должностей был в label, теперь он в
+        # placeholder, где лимит 100 символов.
+        self.position = discord.ui.TextInput(label="Должность", placeholder=names, required=True)
         self.reason = discord.ui.TextInput(label="Причина (необязательно)", required=False, style=discord.TextStyle.paragraph)
         self.add_item(self.discord_id)
         self.add_item(self.position)
@@ -611,25 +620,53 @@ class Audit(commands.Cog):
         )
         await self.send_log(embed)
 
-    # -- Команда для публикации панели -----------------------------------------
+    # -- Панель: общий embed + команда для ручной публикации ------------------
 
-    @app_commands.command(name="аудит_панель", description="Опубликовать панель кадрового аудита в этом канале")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def post_panel(self, interaction: discord.Interaction):
-        embed = discord.Embed(
+    @staticmethod
+    def build_panel_embed(intro: str | None = None) -> discord.Embed:
+        return discord.Embed(
             title="📋 Кадровый аудит",
             description=(
-                "Управление составом сервера.\n\n"
+                (intro + "\n\n" if intro else "")
+                + "Управление составом сервера.\n\n"
                 "**Понизить** / **Повысить** — движение по обычной лестнице рангов "
                 "(Новичок → Фармила 1-3).\n"
                 "**Назначить на должность** — ручное назначение на Туллера / Кадровика / Бухгалтера / Смотрящего.\n"
                 "**Удалить пользователя дискорда** — кик с подтверждением.\n"
                 "**Выдать выговор** / **Снять выговор** — с сохранением истории.\n\n"
+                "Кнопки видят все, но нажать их может только Кадровик и выше.\n"
                 "Все действия попадают в лог-канал аудита."
             ),
             color=0x2C2F33,
         )
-        await interaction.response.send_message(embed=embed, view=AuditPanelView(self))
+
+    @app_commands.command(name="аудит_панель", description="Опубликовать панель кадрового аудита в этом канале")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def post_panel(self, interaction: discord.Interaction):
+        await interaction.response.send_message(embed=self.build_panel_embed(), view=AuditPanelView(self))
+
+    # -- Авто-прикрепление панели под отчётом на повышение ---------------------
+
+    @commands.Cog.listener()
+    async def on_message(self, message: discord.Message):
+        if not PROMOTION_REPORT_CHANNEL_ID:
+            return
+        if str(message.channel.id) != str(PROMOTION_REPORT_CHANNEL_ID):
+            return
+        # реагируем только на сообщения от вебхука Google Apps Script, не на людей/другие боты
+        if message.webhook_id is None or not message.embeds:
+            return
+        title = (message.embeds[0].title or "").lower()
+        if "отчёт на повышение" not in title and "отчет на повышение" not in title:
+            return
+        try:
+            await message.reply(
+                embed=self.build_panel_embed("👇 Панель для обработки этого отчёта:"),
+                view=AuditPanelView(self),
+                mention_author=False,
+            )
+        except Exception:
+            log.exception("Не удалось прикрепить панель аудита к отчёту на повышение")
 
 
 async def setup(bot: commands.Bot):
